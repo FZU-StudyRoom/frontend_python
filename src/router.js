@@ -14,7 +14,7 @@ export const router = createRouter({
   ],
 })
 router.beforeEach(async to => {
-  if (session.token && !session.user) {
+  if (session.token && (!session.user || !to.meta.public)) {
     try { session.user = await api.info() }
     catch (error) { if (error.status === 401 || error.status === 403) clearSession(); else if (!to.meta.public) return { path: '/login', query: { unavailable: '1' } } }
   }

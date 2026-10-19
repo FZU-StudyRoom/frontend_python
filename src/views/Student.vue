@@ -29,7 +29,8 @@ async function load() {
     if (tab.value === 'history') { const result = await api.history(page.value); history.value = result.reservations; total.value = result.total_count }
     else if (tab.value === 'profile') { session.user = await api.info(); Object.assign(profile, { new_email: session.user.email, new_s_id: session.user.s_id }) }
     else {
-      const [all, current] = await Promise.all([api.cabinets(), api.mine()])
+      const [all, current, user] = await Promise.all([api.cabinets(), api.mine(), api.info()])
+      session.user = user
       cabinets.value = all; mine.value = current
       if (!zones.value.includes(zone.value)) zone.value = zones.value[0] || ''
     }
@@ -64,6 +65,10 @@ onMounted(load)
   <template v-else>
     <template v-if="tab === 'cabinets'">
       <RouterLink v-if="mine" to="/reservation" class="reservation-notice"><span><strong>{{ mine.cab_id }} 号柜</strong> · 已预约，查看或管理</span><Icon name="right" :size="16" /></RouterLink>
+      <div v-if="typeof session.user?.is_whitelisted === 'boolean'" :class="['qualification-notice', { listed: session.user.is_whitelisted }]" role="status">
+        <Icon name="shield" :size="17" />
+        <p><strong>{{ session.user.is_whitelisted ? '已在白名单' : '未在白名单' }}</strong><span>{{ session.user.is_whitelisted ? '满足柜子等级可长期预约' : '预约类型由用户等级决定' }}</span></p>
+      </div>
       <div class="cabinet-selectors">
         <label class="zone-select"><span class="sr-only">选择储物柜区域</span><select v-model="zone" :disabled="!zones.length"><option v-if="!zones.length" value="">暂无区域</option><option v-for="name in zones" :key="name" :value="name">{{ name }}</option></select></label>
         <button class="zone-map-button" @click="showMap = true"><Icon name="grid" :size="16" />分区图</button>
@@ -92,6 +97,11 @@ onMounted(load)
 .compact-heading h1{font-size:22px;margin:0}
 .reservation-notice{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;margin-bottom:16px;border-radius:8px;background:#eaf0e1;color:#60794f;font-size:12px}
 .cabinet-selectors{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+.qualification-notice{display:flex;align-items:center;gap:9px;margin-bottom:14px;padding:11px 12px;border:1px solid #dfe6df;border-radius:8px;background:#eef1eb;color:#58694f}
+.qualification-notice.listed{background:#eaf4ee;border-color:#cee3d5;color:#176b55}
+.qualification-notice p{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 10px;line-height:1.6}
+.qualification-notice strong{font-size:13px;font-weight:600}
+.qualification-notice span{font-size:12px}
 .zone-map-button{display:flex;align-items:center;justify-content:center;gap:6px;flex-shrink:0;min-height:44px;padding:10px 12px;border:1px solid #dfe6df;border-radius:8px;background:#fff;color:#536354;font-size:13px}
 .zone-map-button:hover{background:#edf4e8}
 .zone-select{flex:1;min-width:0}
