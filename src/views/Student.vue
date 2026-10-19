@@ -1,7 +1,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { api, session, clearSession } from '../lib/api'
+import { api, session, clearSession, setSession } from '../lib/api'
 import { notify } from '../lib/feedback'
 import { canRenew, formatTime } from '../lib/rules'
 import Icon from '../components/Icon.vue'
@@ -13,7 +13,8 @@ const showMap = ref(false)
 const route = useRoute(), router = useRouter(), tab = computed(() => route.meta.tab)
 const cabinets = ref([]), mine = ref(null), history = ref([]), total = ref(0), page = ref(1)
 const loading = ref(true), error = ref(''), busy = ref(false), zone = ref(''), onlyFree = ref(false), search = ref(''), modal = ref(null)
-const profile = reactive({ new_email: session.user?.email || '', new_s_id: session.user?.s_id || '', verify_code: '' })
+const emailForm = reactive({ email: session.user?.email || '', verify_code: '' })
+const studentForm = reactive({ s_id: session.user?.s_id || '' })
 const zones = computed(() => [...new Set(cabinets.value.map(c => c.zone || '未分区'))])
 const shown = computed(() => cabinets.value.filter(c => (c.zone || '未分区') === zone.value && (!onlyFree.value || c.res_status === 0 && session.user.level >= c.min_level) && String(c.cab_id).includes(search.value)))
 const groups = computed(() => [...new Set(shown.value.map(c => c.zone || '未分区'))].map(name => ({ name, items: shown.value.filter(c => (c.zone || '未分区') === name).sort((a,b) => (a.row ?? Infinity) - (b.row ?? Infinity) || (a.col ?? Infinity) - (b.col ?? Infinity) || a.cab_id - b.cab_id) })))
@@ -27,11 +28,15 @@ async function load() {
   loading.value = true; error.value = ''
   try {
     if (tab.value === 'history') { const result = await api.history(page.value); history.value = result.reservations; total.value = result.total_count }
-    else if (tab.value === 'profile') { session.user = await api.info(); Object.assign(profile, { new_email: session.user.email, new_s_id: session.user.s_id }) }
+    else if (tab.value === 'profile') {
+      session.user = await api.info()
+      emailForm.email = session.user.email; emailForm.verify_code = ''
+      studentForm.s_id = session.user.s_id
+    }
     else {
       const [all, current, user] = await Promise.all([api.cabinets(), api.mine(), api.info()])
       session.user = user
-      cabinets.value = all; mine.value = current
+      cabinets.value = all; mine.value = current; session.reservation = current
       if (!zones.value.includes(zone.value)) zone.value = zones.value[0] || ''
     }
   } catch (e) { error.value = e.message }
@@ -47,10 +52,23 @@ async function action() {
   } catch (e) { notify(e.message, 'error'); if (e.status === 409) { modal.value = null; await load() } }
   finally { busy.value = false }
 }
-async function saveProfile() {
+async function saveEmail() {
   busy.value = true
-  const changedEmail = profile.new_email !== session.user.email
-  try { session.user = await api.profile(profile); profile.verify_code = ''; notify(changedEmail ? '邮箱已更新，请使用新邮箱重新登录' : '个人信息已更新'); if (changedEmail) logout(); }
+  try {
+    setSession(await api.updateEmail({ ...emailForm }))
+    emailForm.email = session.user.email; emailForm.verify_code = ''
+    notify('邮箱已更新，登录状态已同步')
+  }
+  catch (e) { notify(e.message, 'error') }
+  finally { busy.value = false }
+}
+async function saveStudentId() {
+  busy.value = true
+  try {
+    session.user = await api.updateStudentId({ ...studentForm })
+    studentForm.s_id = session.user.s_id
+    notify('学号已更新，预约资格已同步')
+  }
   catch (e) { notify(e.message, 'error') }
   finally { busy.value = false }
 }
@@ -64,11 +82,6 @@ onMounted(load)
   <div v-else-if="loading" class="loading-panel" role="status"><span class="spinner"></span>正在加载你的空间…</div>
   <template v-else>
     <template v-if="tab === 'cabinets'">
-      <RouterLink v-if="mine" to="/reservation" class="reservation-notice"><span><strong>{{ mine.cab_id }} 号柜</strong> · 已预约，查看或管理</span><Icon name="right" :size="16" /></RouterLink>
-      <div v-if="typeof session.user?.is_whitelisted === 'boolean'" :class="['qualification-notice', { listed: session.user.is_whitelisted }]" role="status">
-        <Icon name="shield" :size="17" />
-        <p><strong>{{ session.user.is_whitelisted ? '已在白名单' : '未在白名单' }}</strong><span>{{ session.user.is_whitelisted ? '满足柜子等级可长期预约' : '预约类型由用户等级决定' }}</span></p>
-      </div>
       <div class="cabinet-selectors">
         <label class="zone-select"><span class="sr-only">选择储物柜区域</span><select v-model="zone" :disabled="!zones.length"><option v-if="!zones.length" value="">暂无区域</option><option v-for="name in zones" :key="name" :value="name">{{ name }}</option></select></label>
         <button class="zone-map-button" @click="showMap = true"><Icon name="grid" :size="16" />分区图</button>
@@ -86,22 +99,22 @@ onMounted(load)
       <section v-else class="reservation-card"><div class="reservation-card-top"><span class="eyebrow">YOUR RESERVED SPACE</span><span class="badge">{{ mine.res_type === 1 ? '长期预约' : '普通预约' }}</span></div><span class="big-cabinet">{{ String(mine.cab_id).padStart(2,'0') }}<small>号柜</small></span><p>{{ position(mine) }}</p><dl><div><dt>开始时间</dt><dd>{{ formatTime(mine.start_time) }}</dd></div><div><dt>{{ mine.res_type === 1 ? '预约期限' : '到期时间' }}</dt><dd>{{ mine.res_type === 1 && !mine.end_time ? '长期使用 · 无截止时间' : formatTime(mine.end_time) }}</dd></div></dl><p class="inline-info">{{ mine.res_type === 1 ? '长期预约无需续约，请保持柜内整洁。' : session.user.level < minimum ? '当前等级不满足柜子要求，请在截止时间前清空并取消预约。' : '普通预约在到期后 3 天内可续约，每次延长 60 天。' }}</p><div class="button-row"><button class="secondary danger-text" @click="modal = { type: 'cancel' }">取消预约</button><button v-if="mine.res_type === 0" class="primary" :disabled="!renewable" @click="modal = { type: 'renew' }">{{ renewable ? '续约 60 天' : '暂不可续约' }}</button></div></section>
     </template>
     <template v-if="tab === 'history'"><div v-if="!history.length" class="empty-panel big"><Icon name="history" :size="40" /><h3>还没有历史记录</h3><p>结束后的预约会记录在这里。</p></div><article v-for="(item,index) in history" :key="index" class="history-card"><span class="history-icon"><Icon name="box" :size="24" /></span><div><h3>{{ item.cab_id }} 号柜 <span class="badge neutral">{{ item.res_type === 1 ? '长期' : '普通' }}</span></h3><p>开始 {{ formatTime(item.start_time) }}</p><p>结束 {{ formatTime(item.end_time) }}</p></div><span class="history-ended">已结束</span></article><div v-if="total > 0" class="pagination"><span>共 {{ total }} 条</span><button class="secondary" :disabled="page === 1" @click="flip(-1)">上一页</button><strong>{{ page }}</strong><button class="secondary" :disabled="page * 10 >= total" @click="flip(1)">下一页</button></div></template>
-    <template v-if="tab === 'profile'"><section class="profile-banner"><span class="avatar large">{{ session.user.email?.[0]?.toUpperCase() }}</span><div><h2>{{ session.user.s_id }}</h2><p>{{ session.user.email }}</p><span class="badge">Lv.{{ session.user.level }} · {{ session.user.level >= 3 ? '管理员' : '学生用户' }}</span></div></section><section class="white-card"><h2>个人信息</h2><p class="muted">通过邮箱验证码更新你的联系信息。</p><form class="profile-form" @submit.prevent="saveProfile"><label>邮箱地址<input v-model.trim="profile.new_email" type="email" autocomplete="email" required maxlength="255"></label><label>学号<input v-model.trim="profile.new_s_id" required maxlength="255"></label><label>邮箱验证码<div class="input-with-button"><input v-model.trim="profile.verify_code" autocomplete="one-time-code" inputmode="numeric" required placeholder="请输入验证码"><CodeButton :email="profile.new_email" /></div></label><p class="fine-print">修改邮箱时请获取新邮箱验证码，保存后需重新登录。只改学号时使用当前邮箱验证码。</p><button class="primary full" :disabled="busy">{{ busy ? '保存中…' : '保存修改' }}</button></form></section><button class="secondary full logout-button" @click="logout"><Icon name="logout" :size="17" />退出登录</button></template>
+    <template v-if="tab === 'profile'">
+      <section class="profile-banner"><span class="avatar large">{{ session.user.email?.[0]?.toUpperCase() }}</span><div><h2>{{ session.user.s_id }}</h2><p>{{ session.user.email }}</p><span class="badge">Lv.{{ session.user.level }} · {{ session.user.level >= 3 ? '管理员' : '学生用户' }}</span></div></section>
+      <section class="white-card profile-edit-card"><h2>修改学号</h2><form class="profile-form" @submit.prevent="saveStudentId"><label>新学号<input v-model.trim="studentForm.s_id" required maxlength="255" :disabled="busy"></label><p class="fine-print">有效预约随学号更新，白名单资格将重新判断。</p><button class="primary full" :disabled="busy || !studentForm.s_id || studentForm.s_id === session.user.s_id">保存学号</button></form></section>
+      <section class="white-card profile-edit-card"><h2>修改邮箱</h2><form class="profile-form" @submit.prevent="saveEmail"><label>新邮箱<input v-model.trim="emailForm.email" type="email" autocomplete="email" required maxlength="255" :disabled="busy"></label><label>新邮箱验证码<div class="input-with-button"><input v-model.trim="emailForm.verify_code" autocomplete="one-time-code" inputmode="numeric" required maxlength="255" :disabled="busy" placeholder="请输入验证码"><CodeButton :email="emailForm.email" /></div></label><p class="fine-print">请获取新邮箱的验证码。保存后自动更新登录状态，无需重新登录。</p><button class="primary full" :disabled="busy || emailForm.email === session.user.email">保存邮箱</button></form></section>
+      <button class="secondary full logout-button" :disabled="busy" @click="logout"><Icon name="logout" :size="17" />退出登录</button>
+    </template>
   </template>
   <ZoneMap v-if="showMap" @close="showMap = false" />
   <Modal v-if="modal" :title="modal.type === 'reserve' ? '确认预约' : modal.type === 'cancel' ? '取消当前预约？' : '确认续约'" :busy="busy" @close="modal = null"><template v-if="modal.type === 'reserve'"><div class="confirm-cabinet"><Icon name="box" :size="35" /><strong>{{ modal.cabinet.cab_id }} 号柜</strong><p>{{ position(modal.cabinet) }}</p></div><p class="muted">预约类型和截止时间由系统根据你的资格确定。预约成功后，可在「我的预约」中查看。</p></template><p v-else class="muted">{{ modal.type === 'cancel' ? '请先取走柜内所有物品。取消后柜子将立即释放，其他同学可以预约。' : '确认后在原截止时间基础上延长 60 天。' }}</p><div class="modal-actions"><button class="secondary" :disabled="busy" @click="modal = null">再想想</button><button :class="modal.type === 'cancel' ? 'danger' : 'primary'" :disabled="busy" @click="action">{{ busy ? '处理中…' : '确认' }}</button></div></Modal>
 </template>
 
 <style scoped>
+.profile-edit-card{margin-bottom:16px}
 .compact-heading{margin-bottom:16px}
 .compact-heading h1{font-size:22px;margin:0}
-.reservation-notice{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;margin-bottom:16px;border-radius:8px;background:#eaf0e1;color:#60794f;font-size:12px}
 .cabinet-selectors{display:flex;align-items:center;gap:12px;margin-bottom:12px}
-.qualification-notice{display:flex;align-items:center;gap:9px;margin-bottom:14px;padding:11px 12px;border:1px solid #dfe6df;border-radius:8px;background:#eef1eb;color:#58694f}
-.qualification-notice.listed{background:#eaf4ee;border-color:#cee3d5;color:#176b55}
-.qualification-notice p{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 10px;line-height:1.6}
-.qualification-notice strong{font-size:13px;font-weight:600}
-.qualification-notice span{font-size:12px}
 .zone-map-button{display:flex;align-items:center;justify-content:center;gap:6px;flex-shrink:0;min-height:44px;padding:10px 12px;border:1px solid #dfe6df;border-radius:8px;background:#fff;color:#536354;font-size:13px}
 .zone-map-button:hover{background:#edf4e8}
 .zone-select{flex:1;min-width:0}

@@ -1,9 +1,9 @@
 import { reactive } from 'vue'
 import { errorMessage } from './rules'
 const TOKEN_KEY = 'rc_token'
-export const session = reactive({ token: localStorage.getItem(TOKEN_KEY) || '', user: null, ready: false })
+export const session = reactive({ token: localStorage.getItem(TOKEN_KEY) || '', user: null, reservation: null, ready: false })
 export function clearSession() {
-  session.token = ''; session.user = null; localStorage.removeItem(TOKEN_KEY)
+  session.token = ''; session.user = null; session.reservation = null; localStorage.removeItem(TOKEN_KEY)
 }
 export function setSession(data) {
   session.token = data.Token; session.user = data.userInfo; session.ready = true
@@ -24,7 +24,8 @@ export async function request(path, { method = 'GET', body, file, download = fal
     const data = await response.json().catch(() => null)
     if (!response.ok || (data?.code !== undefined && data.code !== 200)) {
       const error = new Error(errorMessage(data)); error.status = response.status
-      if (response.status === 401 && !['/users/login', '/users/update_info'].includes(path)) {
+      const emailCodeError = path === '/users/update_email' && error.message.includes('验证码')
+      if (response.status === 401 && !emailCodeError && !['/users/login', '/users/update_info'].includes(path)) {
         clearSession(); window.dispatchEvent(new Event('rc-session-expired'))
       }
       throw error
@@ -40,7 +41,8 @@ export const api = {
   info: () => request('/users/info'),
   code: email => request(`/users/generate_verification_code?email=${encodeURIComponent(email)}`),
   login: body => request('/users/login', { method: 'POST', body }),
-  profile: body => request('/users/update_info', { method: 'PUT', body }),
+  updateEmail: body => request('/users/update_email', { method: 'PUT', body }),
+  updateStudentId: body => request('/users/update_student_id', { method: 'PUT', body }),
   cabinets: () => request('/reservations/cab_status'),
   mine: () => request('/reservations/my_reservation'),
   reserve: id => request(`/reservations/reserve?cab_id=${encodeURIComponent(id)}`, { method: 'POST' }),
