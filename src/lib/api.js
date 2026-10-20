@@ -51,7 +51,7 @@ export const api = {
   history: page => request(`/reservations/my_history?page=${page}&page_size=10`),
   list: (kind, body) => request(`/${kind}/list`, { method: 'POST', body }),
   remark: (id, remark) => request(`/reservations/update/remark/${id}`, { method: 'PUT', body: { remark } }),
-  minimum: body => request('/reservations/update/min_level/', { method: 'PUT', body }),
+  minimum: body => request('/reservations/update/min_level', { method: 'PUT', body }),
   level: user => request('/users/update_level', { method: 'PUT', body: { new_email: user.email, new_s_id: user.s_id, verify_code: 'unused', level: user.level } }),
   addWhite: body => request('/whitelist/add', { method: 'POST', body }),
   whiteRemark: body => request('/whitelist/update_remark', { method: 'PUT', body }),

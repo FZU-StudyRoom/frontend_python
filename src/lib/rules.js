@@ -1,3 +1,8 @@
+const levelNames = ['普通学生', '志愿者', '自习室团队干事', '系统管理员', '管理员']
+export function levelLabel(level) {
+  return levelNames[level] ? `Lv.${level} · ${levelNames[level]}` : `Lv.${level}`
+}
+
 export function compactFilters(values) {
   return Object.fromEntries(Object.entries(values).filter(([, value]) => value !== '' && value !== null && value !== undefined))
 }

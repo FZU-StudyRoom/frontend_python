@@ -1,17 +1,18 @@
 <script setup>
 import { computed, ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import Icon from './Icon.vue'
+import { levelLabel } from '../lib/rules'
 
 const props = defineProps({ items: { type: Array, required: true }, level: { type: Number, default: 0 }, reserved: Boolean, name: String })
 const emit = defineEmits(['reserve'])
 const track = ref(null), offset = ref(0), step = ref(1)
 const columns = computed(() => {
-  // Preserve the cabinet's actual column and row when positions are available.
-  if (props.items.every(item => item.col != null && item.row != null)) {
+  // Keep each physical database column intact and order its cabinets by row.
+  if (props.items.every(item => item.col != null)) {
     return [...new Set(props.items.map(item => item.col))].sort((a, b) => a - b)
-      .map(col => props.items.filter(item => item.col === col).sort((a, b) => a.row - b.row || a.cab_id - b.cab_id))
+      .map(col => props.items.filter(item => item.col === col).sort((a, b) => (a.row ?? Infinity) - (b.row ?? Infinity) || a.cab_id - b.cab_id))
   }
-  return Array.from({ length: Math.ceil(props.items.length / 3) }, (_, index) => props.items.slice(index * 3, index * 3 + 3))
+  return Array.from({ length: Math.ceil(props.items.length / 4) }, (_, index) => props.items.slice(index * 4, index * 4 + 4))
 })
 const current = computed(() => Math.round(offset.value / step.value))
 const last = computed(() => Math.max(0, columns.value.length - 2))
@@ -44,15 +45,15 @@ watch(() => props.items, async () => { await nextTick(); track.value?.scrollTo({
           <button v-for="cabinet in column" :key="cabinet.cab_id" :class="['cabinet', state(cabinet)]" :disabled="state(cabinet) !== 'free' || reserved" :aria-label="`${cabinet.cab_id}号柜，${cabinet.row ?? '未知'}行，${cabinet.col ?? '未知'}列，${state(cabinet) === 'free' ? '可预约' : state(cabinet) === 'locked' ? '等级不足' : '已占用'}`" @click="emit('reserve', cabinet)">
             <div class="cabinet-top"><span>{{ String(cabinet.cab_id).padStart(2, '0') }}</span><Icon :name="state(cabinet) === 'locked' ? 'lock' : 'box'" :size="18" /></div>
             <small>{{ cabinet.row != null && cabinet.col != null ? `${cabinet.row} 行 · ${cabinet.col} 列` : '位置未标注' }}</small>
-            <span class="cabinet-state">{{ state(cabinet) === 'free' ? '可预约' : state(cabinet) === 'locked' ? `需 Lv.${cabinet.min_level}` : '已占用' }}</span>
-            <span v-if="state(cabinet) === 'free'" class="cabinet-min">Lv.{{ cabinet.min_level }} 起</span>
+            <span class="cabinet-state">{{ state(cabinet) === 'free' ? '可预约' : state(cabinet) === 'locked' ? `需 ${levelLabel(cabinet.min_level)}` : '已占用' }}</span>
+            <span v-if="state(cabinet) === 'free'" class="cabinet-min">{{ levelLabel(cabinet.min_level) }} 起</span>
           </button>
         </div>
       </div>
     </div>
     <div v-if="columns.length > 2" class="cabinet-reel-controls">
       <button class="icon-button" :disabled="current === 0" aria-label="向左滚动一列" @click="move(-1)"><Icon class="reel-previous" name="right" :size="18" /></button>
-      <span aria-live="polite">{{ current + 1 }}–{{ Math.min(current + 2, columns.length) }} / {{ columns.length }} 列 <small>左右滑动选柜</small></span>
+      <span aria-live="polite">{{ current + 1 }}–{{ Math.min(current + 2, columns.length) }} / {{ columns.length }} 组 <small>左右滑动选柜</small></span>
       <button class="icon-button" :disabled="current >= last" aria-label="向右滚动一列" @click="move(1)"><Icon name="right" :size="18" /></button>
     </div>
   </div>
@@ -60,11 +61,16 @@ watch(() => props.items, async () => { await nextTick(); track.value?.scrollTo({
 
 <style scoped>
 .cabinet-carousel{min-width:0}
-.cabinet-reel{display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;overscroll-behavior-x:contain;scrollbar-width:thin;scrollbar-color:#b7c9a7 transparent;padding:8px 0 14px;border-radius:12px}
+.cabinet-reel{display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;overscroll-behavior-x:contain;scrollbar-width:thin;scrollbar-color:#b7c9a7 transparent;padding:4px 0 8px;border-radius:10px}
 .cabinet-reel:focus-visible{outline:3px solid #8ac5a9;outline-offset:3px}
 .cabinet-column{flex:0 0 calc((100% - 12px)/2);min-width:0;scroll-snap-align:start;scroll-snap-stop:always}
-.cabinet-column-face{display:flex;flex-direction:column;gap:10px;will-change:transform}
-.cabinet-column .cabinet{width:100%;min-height:132px;flex-shrink:0}
+.cabinet-column-face{display:flex;flex-direction:column;gap:6px;will-change:transform}
+.cabinet-column .cabinet .cabinet-min{position:static;display:block;margin-top:2px;font-size:10px;line-height:1.3;overflow-wrap:anywhere}
+.cabinet-column .cabinet .cabinet-state{margin-top:5px;font-size:10px;line-height:1.3;overflow-wrap:anywhere}
+.cabinet-column .cabinet{width:100%;min-height:96px;padding:8px 10px;border-radius:7px;flex-shrink:0}
+.cabinet-column .cabinet-top{font-size:20px;margin-bottom:2px;line-height:1.2}
+.cabinet-column .cabinet-top svg{width:14px;height:14px}
+.cabinet-column .cabinet>small{font-size:10px;line-height:1.2}
 .cabinet-reel-controls{display:flex;align-items:center;justify-content:space-between;margin-top:5px;color:#6b845c;font-size:12px;font-variant-numeric:tabular-nums}
 .cabinet-reel-controls small{color:#89958e;margin-left:10px;font-size:11px}
 .reel-previous{transform:rotate(180deg)}
