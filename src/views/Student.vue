@@ -1,7 +1,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { api, session, clearSession, setSession } from '../lib/api'
+import { api, session, setSession, logout as endSession } from '../lib/api'
 import { notify } from '../lib/feedback'
 import { canRenew, formatTime, levelLabel } from '../lib/rules'
 import Icon from '../components/Icon.vue'
@@ -22,12 +22,12 @@ function editEmail() {
 }
 const zones = computed(() => [...new Set(cabinets.value.map(c => c.zone || '未分区'))])
 const shown = computed(() => cabinets.value.filter(c => (c.zone || '未分区') === zone.value && (!onlyFree.value || c.res_status === 0 && session.user.level >= c.min_level) && String(c.cab_id).includes(search.value)))
-const groups = computed(() => [...new Set(shown.value.map(c => c.zone || '未分区'))].map(name => ({ name, items: shown.value.filter(c => (c.zone || '未分区') === name).sort((a,b) => (a.row ?? Infinity) - (b.row ?? Infinity) || (a.col ?? Infinity) - (b.col ?? Infinity) || a.cab_id - b.cab_id) })))
 const minimum = computed(() => cabinets.value.find(c => c.cab_id === mine.value?.cab_id)?.min_level || 0)
 const clock = ref(Date.now())
 const renewalTimer = setInterval(() => { clock.value = Date.now() }, 1000)
 onUnmounted(() => clearInterval(renewalTimer))
 const renewable = computed(() => canRenew(mine.value, session.user?.level || 0, minimum.value, clock.value))
+const longTermEligible = computed(() => (session.user?.level || 0) >= 1 || session.user?.is_whitelisted === true)
 function position(c) { return [c.zone, c.row != null ? `${c.row} 行` : '', c.col != null ? `${c.col} 列` : ''].filter(Boolean).join(' · ') || '位置暂未标注' }
 async function load() {
   loading.value = true; error.value = ''
@@ -67,7 +67,6 @@ async function saveEmail() {
   catch (e) { notify(e.message, 'error') }
   finally { busy.value = false }
 }
-function logout() { clearSession(); router.replace('/login') }
 async function flip(delta) { page.value += delta; await load() }
 onMounted(load)
 </script>
@@ -85,22 +84,22 @@ onMounted(load)
         <label class="zone-select"><span class="sr-only">选择储物柜区域</span><select v-model="zone" :disabled="!zones.length"><option v-if="!zones.length" value="">暂无区域</option><option v-for="name in zones" :key="name" :value="name">{{ name }}</option></select></label>
       </div>
       <div v-if="!shown.length" class="empty-panel"><Icon name="box" :size="36" /><h3>暂无符合条件的柜子</h3><p>试试其他区域或调整筛选条件。</p></div>
-      <section v-for="group in groups" :key="group.name" class="cabinet-group"><div class="group-heading"><span>{{ group.name }}</span><small>{{ group.items.length }} 个柜子</small></div><CabinetCarousel :items="group.items" :name="group.name" :level="session.user?.level || 0" :reserved="!!mine" @reserve="cabinet => modal = { type: 'reserve', cabinet }" /></section>
+      <section v-if="shown.length" class="cabinet-group"><div class="group-heading"><span>{{ zone }}</span><small>{{ shown.length }} 个柜子</small></div><CabinetCarousel :items="shown" :name="zone" :level="session.user?.level || 0" :reserved="!!mine" @reserve="cabinet => modal = { type: 'reserve', cabinet }" /></section>
       <p class="page-note"><Icon name="shield" :size="15" />{{ mine ? '你已有有效预约，请先取消当前预约再选柜。' : '每人同一时间可预约一个柜子，预约资格以系统校验为准。' }}</p>
     </template>
     <template v-if="tab === 'reservation'">
       <div v-if="!mine" class="empty-panel big"><Icon name="calendar" :size="44" /><h2>为你的日常留个位置</h2><p>目前没有有效预约，去选一个合适的柜子吧。</p><RouterLink class="primary" to="/cabinets">去选柜<Icon name="arrow" :size="17" /></RouterLink></div>
-      <section v-else class="reservation-card"><div class="reservation-card-top"><span class="eyebrow">YOUR RESERVED SPACE</span><span class="badge">{{ mine.res_type === 1 ? '长期预约' : '普通预约' }}</span></div><span class="big-cabinet">{{ String(mine.cab_id).padStart(2,'0') }}<small>号柜</small></span><p>{{ position(mine) }}</p><dl><div><dt>开始时间</dt><dd>{{ formatTime(mine.start_time) }}</dd></div><div><dt>{{ mine.res_type === 1 ? '预约期限' : '到期时间' }}</dt><dd>{{ mine.res_type === 1 && !mine.end_time ? '长期使用 · 无截止时间' : formatTime(mine.end_time) }}</dd></div></dl><p class="inline-info">{{ mine.res_type === 1 ? '长期预约无需续约，请保持柜内整洁。' : session.user.level < minimum ? '当前等级不满足柜子要求，请在截止时间前清空并取消预约。' : '普通预约在到期后 3 天内可续约，每次延长 60 天。' }}</p><div class="button-row"><button class="secondary danger-text" @click="modal = { type: 'cancel' }">取消预约</button><button v-if="mine.res_type === 0" class="primary" :disabled="!renewable" @click="modal = { type: 'renew' }">{{ renewable ? '续约 60 天' : '暂不可续约' }}</button></div></section>
+      <section v-else class="reservation-card"><div class="reservation-card-top"><span class="eyebrow">YOUR RESERVED SPACE</span><span class="badge">{{ mine.res_type === 1 ? '长期预约' : '普通预约' }}</span></div><span class="big-cabinet">{{ String(mine.cab_id).padStart(2,'0') }}<small>号柜</small></span><p>{{ position(mine) }}</p><dl><div><dt>开始时间</dt><dd>{{ formatTime(mine.start_time) }}</dd></div><div><dt>{{ mine.res_type === 1 ? '预约期限' : '到期时间' }}</dt><dd>{{ mine.res_type === 1 && !mine.end_time ? '长期使用 · 无截止时间' : formatTime(mine.end_time) }}</dd></div></dl><p class="inline-info">{{ mine.res_type === 1 ? '长期预约无需续约，请保持柜内整洁。' : session.user.level < minimum ? '当前等级不满足柜子要求，请在截止时间前清空并取消预约。' : (longTermEligible ? '你已具备长期预约资格，到期后可在 3 天宽限期内续约为长期预约。' : '普通预约在到期后 3 天内可续约，每次延长 61 天。') }}</p><div class="button-row"><button class="secondary danger-text" @click="modal = { type: 'cancel' }">取消预约</button><button v-if="mine.res_type === 0" class="primary" :disabled="!renewable" @click="modal = { type: 'renew' }">{{ renewable ? (longTermEligible ? '续约为长期预约' : '续约 61 天') : '暂不可续约' }}</button></div></section>
     </template>
     <template v-if="tab === 'history'"><div v-if="!history.length" class="empty-panel big"><Icon name="history" :size="40" /><h3>还没有历史记录</h3><p>结束后的预约会记录在这里。</p></div><article v-for="(item,index) in history" :key="index" class="history-card"><span class="history-icon"><Icon name="box" :size="24" /></span><div><h3>{{ item.cab_id }} 号柜 <span class="badge neutral">{{ item.res_type === 1 ? '长期' : '普通' }}</span></h3><p>开始 {{ formatTime(item.start_time) }}</p><p>结束 {{ formatTime(item.end_time) }}</p></div><span class="history-ended">已结束</span></article><div v-if="total > 0" class="pagination"><span>共 {{ total }} 条</span><button class="secondary" :disabled="page === 1" @click="flip(-1)">上一页</button><strong>{{ page }}</strong><button class="secondary" :disabled="page * 10 >= total" @click="flip(1)">下一页</button></div></template>
     <template v-if="tab === 'profile'">
       <section class="white-card account-card">
         <header class="account-heading"><span class="avatar large">{{ session.user.email?.[0]?.toUpperCase() }}</span><div><h2>个人信息</h2><span class="badge">{{ levelLabel(session.user.level) }}</span></div></header>
         <dl class="account-details">
-          <div class="account-row"><dt>学号</dt><dd><strong>{{ session.user.s_id }}</strong><p class="student-id-help">若需修改学号，请联系管理员</p></dd></div>
+          <div class="account-row"><dt>图书馆借阅号</dt><dd><strong>{{ session.user.s_id }}</strong><p class="student-id-help">若需修改借阅号，请联系管理员</p></dd></div>
           <div class="account-row"><dt>邮箱</dt><dd class="account-email"><span>{{ session.user.email }}</span><button class="text-button" aria-label="修改邮箱" @click="editEmail">修改</button></dd></div>
         </dl>
-        <button class="secondary full" :disabled="busy" @click="logout"><Icon name="logout" :size="17" />退出登录</button>
+        <button class="secondary full" :disabled="busy" @click="endSession(router)"><Icon name="logout" :size="17" />退出登录</button>
       </section>
     </template>
   </template>
@@ -112,7 +111,7 @@ onMounted(load)
     </form>
   </Modal>
   <ZoneMap v-if="showMap" @close="showMap = false" />
-  <Modal v-if="modal" :title="modal.type === 'reserve' ? '确认预约' : modal.type === 'cancel' ? '取消当前预约？' : '确认续约'" :busy="busy" @close="modal = null"><template v-if="modal.type === 'reserve'"><div class="confirm-cabinet"><Icon name="box" :size="35" /><strong>{{ modal.cabinet.cab_id }} 号柜</strong><p>{{ position(modal.cabinet) }}</p></div><p class="muted">预约类型和截止时间由系统根据你的资格确定。预约成功后，可在「我的预约」中查看。</p></template><p v-else class="muted">{{ modal.type === 'cancel' ? '请先取走柜内所有物品。取消后柜子将立即释放，其他同学可以预约。' : '确认后在原截止时间基础上延长 60 天。' }}</p><div class="modal-actions"><button class="secondary" :disabled="busy" @click="modal = null">再想想</button><button :class="modal.type === 'cancel' ? 'danger' : 'primary'" :disabled="busy" @click="action">{{ busy ? '处理中…' : '确认' }}</button></div></Modal>
+  <Modal v-if="modal" :title="modal.type === 'reserve' ? '确认预约' : modal.type === 'cancel' ? '取消当前预约？' : '确认续约'" :busy="busy" @close="modal = null"><template v-if="modal.type === 'reserve'"><div class="confirm-cabinet"><Icon name="box" :size="35" /><strong>{{ modal.cabinet.cab_id }} 号柜</strong><p>{{ position(modal.cabinet) }}</p></div><p class="muted">预约类型和截止时间由系统根据你的资格确定。预约成功后，可在「我的预约」中查看。</p></template><p v-else class="muted">{{ modal.type === 'cancel' ? '请先取走柜内所有物品。取消后柜子将立即释放，其他同学可以预约。' : (longTermEligible ? '确认后本次预约将转为长期预约，不再设置截止时间。' : '确认后在原截止时间基础上延长 61 天。') }}</p><div class="modal-actions"><button class="secondary" :disabled="busy" @click="modal = null">再想想</button><button :class="modal.type === 'cancel' ? 'danger' : 'primary'" :disabled="busy" @click="action">{{ busy ? '处理中…' : '确认' }}</button></div></Modal>
 </template>
 
 <style scoped>
@@ -121,7 +120,7 @@ onMounted(load)
 .account-heading h2{font-size:18px;margin-bottom:8px}
 .account-details{margin:22px 0}
 .account-row{display:flex;align-items:baseline;gap:16px;padding:16px 0;border-top:1px solid var(--border);font-size:13px}
-.account-row dt{flex:0 0 36px;color:#89958e}
+.account-row dt{flex:0 0 84px;color:#89958e}
 .account-row dd{flex:1;min-width:0;margin:0;overflow-wrap:anywhere}
 .account-row strong{font-weight:500}
 .student-id-help{font-size:12px;color:#89958e;line-height:1.6;margin-top:6px}

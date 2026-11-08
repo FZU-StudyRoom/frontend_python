@@ -5,6 +5,7 @@ export const session = reactive({ token: localStorage.getItem(TOKEN_KEY) || '', 
 export function clearSession() {
   session.token = ''; session.user = null; session.reservation = null; localStorage.removeItem(TOKEN_KEY)
 }
+export function logout(router) { clearSession(); router?.replace('/login') }
 export function setSession(data) {
   session.token = data.Token; session.user = data.userInfo; session.ready = true
   localStorage.setItem(TOKEN_KEY, data.Token)
@@ -25,7 +26,7 @@ export async function request(path, { method = 'GET', body, file, download = fal
     if (!response.ok || (data?.code !== undefined && data.code !== 200)) {
       const error = new Error(errorMessage(data)); error.status = response.status
       const emailCodeError = path === '/users/update_email' && error.message.includes('验证码')
-      if (response.status === 401 && !emailCodeError && !['/users/login', '/users/update_info'].includes(path)) {
+      if (response.status === 401 && !emailCodeError && path !== '/users/login') {
         clearSession(); window.dispatchEvent(new Event('rc-session-expired'))
       }
       throw error
@@ -51,8 +52,12 @@ export const api = {
   history: page => request(`/reservations/my_history?page=${page}&page_size=10`),
   list: (kind, body) => request(`/${kind}/list`, { method: 'POST', body }),
   remark: (id, remark) => request(`/reservations/update/remark/${id}`, { method: 'PUT', body: { remark } }),
+  updateReservationStuId: (id, stu_id) => request(`/reservations/update/stu_id/${encodeURIComponent(id)}`, { method: 'PUT', body: { stu_id } }),
   minimum: body => request('/reservations/update/min_level', { method: 'PUT', body }),
-  level: user => request('/users/update_level', { method: 'PUT', body: { new_email: user.email, new_s_id: user.s_id, verify_code: 'unused', level: user.level } }),
+  addCabinet: body => request('/reservations/add', { method: 'POST', body }),
+  removeCabinet: id => request(`/reservations/delete/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  clearCabinets: () => request('/reservations/delete_all', { method: 'DELETE' }),
+  level: user => request('/users/update_level', { method: 'PUT', body: { email: user.email, level: user.level } }),
   addWhite: body => request('/whitelist/add', { method: 'POST', body }),
   whiteRemark: body => request('/whitelist/update_remark', { method: 'PUT', body }),
   removeWhite: id => request(`/whitelist/remove/${encodeURIComponent(id)}`, { method: 'DELETE' }),
